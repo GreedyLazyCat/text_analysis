@@ -1,0 +1,10 @@
+# Local virtual environments
+.venv/
+venv/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+
+# IDE files
+.idea/
