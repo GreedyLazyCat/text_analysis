@@ -1,56 +1,83 @@
 import re
-from collections import Counter, defaultdict
-import pymorphy3
+from collections import Counter
+
 import nltk
-from razdel import sentenize, tokenize
+import pymorphy3
+from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.util import ngrams
-nltk.download('punkt')
+
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
+
+
+RUSSIAN_ALPHABET = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+POS_TAGS = (
+    "NOUN", "ADJF", "ADJS", "COMP", "VERB", "INFN", "PRTF", "PRTS",
+    "GRND", "NUMR", "ADVB", "NPRO", "PRED", "PREP", "CONJ", "PRCL",
+    "INTJ"
+)
+POS_BIGRAMS = tuple((first, second) for first in POS_TAGS for second in POS_TAGS)
+
 
 class StylometricAnalyzer:
     def __init__(self):
         self.morph = pymorphy3.MorphAnalyzer()
 
     def analyze(self, text):
-        results = {}
+        tokens = [token.lower() for token in word_tokenize(text, language='russian') if token.isalpha()]
+        analyses = [self.morph.parse(token)[0] for token in tokens]
+        lemmas = [analysis.normal_form for analysis in analyses]
+        pos_tags = [analysis.tag.POS for analysis in analyses if analysis.tag.POS]
 
-        tokens = [t.text for t in tokenize(text) if t.text.isalpha()]
-        lemmas = [self.morph.parse(token)[0].normal_form for token in tokens]
-        pos_tags = [self.morph.parse(token)[0].tag.POS for token in tokens if self.morph.parse(token)[0].tag.POS]
+        return {
+            'char_frequencies': self.char_frequencies(text),
+            'avg_sentence_length': self.avg_sentence_length(text),
+            'avg_word_length': self.avg_word_length(tokens),
+            'lexical_density': self.lexical_density(analyses, len(lemmas)),
+            'lexical_diversity': self.lexical_diversity(lemmas),
+            'pos_ngrams': self.pos_ngrams(pos_tags)
+        }
 
-        results['char_frequencies'] = self.char_frequencies(text)
-
-        results['avg_sentence_length'] = self.avg_sentence_length(text)
-        results['avg_word_length'] = self.avg_word_length(tokens)
-        results['lexical_density'] = self.lexical_density(lemmas)
-        results['lexical_diversity'] = self.lexical_diversity(lemmas)
-
-        results['pos_ngrams'] = self.pos_ngrams(pos_tags, n=2)
-        return results
     def char_frequencies(self, text):
-        text = text.lower()
-        letters_only = re.findall(r'[а-яё]', text)
-        counter = Counter(letters_only)
-        total = sum(counter.values())
-        return {char: round(count / total, 4) for char, count in counter.items()}
+        letters = re.findall(r'[а-яё]', text.lower())
+        total = len(letters)
+        if not total:
+            return {char: 0.0 for char in RUSSIAN_ALPHABET}
+        counts = Counter(letters)
+        return {
+            char: round(counts[char] / total, 6)
+            for char in RUSSIAN_ALPHABET
+        }
+
     def avg_sentence_length(self, text):
-        sentences = list(sentenize(text))
+        sentences = sent_tokenize(text, language='russian')
         if not sentences:
             return 0
-        word_counts = [len([t for t in tokenize(sent.text) if t.text.isalpha()]) for sent in sentences]
+        word_counts = [
+            sum(1 for token in word_tokenize(sentence, language='russian') if token.isalpha())
+            for sentence in sentences
+        ]
         return round(sum(word_counts) / len(word_counts), 2)
+
     def avg_word_length(self, tokens):
-        if not tokens:
-            return 0
-        return round(sum(len(word) for word in tokens) / len(tokens), 2)
-    def lexical_density(self, lemmas):
-        content_pos = {'NOUN', 'ADJF', 'VERB', 'ADVB'}
-        content_words = [lemma for lemma in lemmas
-                         if self.morph.parse(lemma)[0].tag.POS in content_pos]
-        return round(len(content_words) / len(lemmas), 4) if lemmas else 0
+        return round(sum(map(len, tokens)) / len(tokens), 2) if tokens else 0
+
+    def lexical_density(self, analyses, total_words):
+        content_pos = {'NOUN', 'ADJF', 'ADJS', 'VERB', 'ADVB'}
+        content_words = sum(
+            analysis.tag.POS in content_pos for analysis in analyses
+        )
+        return round(content_words / total_words, 4) if total_words else 0
+
     def lexical_diversity(self, lemmas):
         return round(len(set(lemmas)) / len(lemmas), 4) if lemmas else 0
-    def pos_ngrams(self, pos_tags, n=2):
-        if len(pos_tags) < n:
-            return {}
-        ng = list(ngrams(pos_tags, n))
-        return dict(Counter(ng))
+
+    def pos_ngrams(self, pos_tags):
+        if len(pos_tags) < 2:
+            return {f'{first}|{second}': 0.0 for first, second in POS_BIGRAMS}
+        counts = Counter(ngrams(pos_tags, 2))
+        total = sum(counts.values())
+        return {
+            f'{first}|{second}': round(counts[(first, second)] / total, 6)
+            for first, second in POS_BIGRAMS
+        }

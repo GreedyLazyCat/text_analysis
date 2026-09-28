@@ -2,11 +2,15 @@ import csv
 import json
 import logging
 import os
-from json import JSONEncoder
-from sklearn.naive_bayes import GaussianNB
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from pathlib import Path
+
 import numpy as np
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import GaussianNB
+
+from stylometry import POS_BIGRAMS, RUSSIAN_ALPHABET
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,103 +18,110 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class TupleEncoder(JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, tuple):
-            return {'__tuple__': True, 'items': list(obj)}
-        return super().default(obj)
-def tuple_hook(dct):
-    if '__tuple__' in dct:
-        return tuple(dct['items'])
-    return dct
 
 class NewsClassifier:
     def __init__(self):
         self.model = GaussianNB()
         self.is_trained = False
-    def _convert_tuples(self, data):
-        if isinstance(data, tuple):
-            return {'__tuple__': True, 'items': list(data)}
-        elif isinstance(data, dict):
-            return {k: self._convert_tuples(v) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [self._convert_tuples(item) for item in data]
-        return data
-
-    def _restore_tuples(self, data):
-        if isinstance(data, dict):
-            if '__tuple__' in data:
-                return tuple(data['items'])
-            return {k: self._restore_tuples(v) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [self._restore_tuples(item) for item in data]
-        return data
 
     def extract_features(self, stylometry_data):
         try:
-            if isinstance(stylometry_data, str):
-                data = json.loads(stylometry_data, object_hook=tuple_hook)
-            elif isinstance(stylometry_data, dict):
-                data = self._restore_tuples(stylometry_data)
-            else:
-                raise ValueError("Неподдерживаемый формат данных")
-            required = ['avg_sentence_length', 'avg_word_length',
-                        'lexical_density', 'lexical_diversity',
-                        'char_frequencies', 'pos_ngrams']
-            if not all(field in data for field in required):
+            data = json.loads(stylometry_data) if isinstance(stylometry_data, str) else stylometry_data
+            required = {
+                'avg_sentence_length', 'avg_word_length', 'lexical_density',
+                'lexical_diversity', 'char_frequencies', 'pos_ngrams'
+            }
+            if not required.issubset(data):
                 raise ValueError("Отсутствуют обязательные поля")
+
             features = [
                 float(data['avg_sentence_length']),
                 float(data['avg_word_length']),
                 float(data['lexical_density']),
                 float(data['lexical_diversity'])
             ]
-            char_freq = data['char_frequencies']
-            top_chars = sorted(char_freq.items(), key=lambda x: -x[1])[:10]
-            features.extend([freq for _, freq in top_chars] + [0.0] * (10 - len(top_chars)))
-            pos_ngrams = data['pos_ngrams']
-            top_pos = sorted(pos_ngrams.items(), key=lambda x: -x[1])[:5]
-            features.extend([freq for _, freq in top_pos] + [0.0] * (5 - len(top_pos)))
-            return features
-        except Exception as e:
-            logger.error(f"Ошибка извлечения признаков: {str(e)}")
-            return None
-    def load_data(self, old_news_file, recent_news_file):
-        if not all(os.path.exists(f) for f in [old_news_file, recent_news_file]):
-            raise FileNotFoundError("Файлы данных не найдены")
-        X, y = [], []
-        for file, label in [(old_news_file, 0), (recent_news_file, 1)]:
-            try:
-                with open(file, 'r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        if 'stylometry' not in row:
-                            continue
+            char_frequencies = data['char_frequencies']
+            features.extend(float(char_frequencies.get(char, 0.0)) for char in RUSSIAN_ALPHABET)
 
-                        features = self.extract_features(row['stylometry'])
-                        if features:
-                            X.append(features)
-                            y.append(label)
-            except Exception as e:
-                logger.error(f"Ошибка чтения {file}: {str(e)}")
-                continue
-        if not X:
+            pos_frequencies = data['pos_ngrams']
+            features.extend(
+                float(pos_frequencies.get(f'{first}|{second}', 0.0))
+                for first, second in POS_BIGRAMS
+            )
+            return features
+        except Exception as error:
+            logger.error(f"Ошибка извлечения признаков: {error}")
+            return None
+
+    def load_data(self, old_news_file, recent_news_file):
+        records = []
+        for filename, label in [(old_news_file, 0), (recent_news_file, 1)]:
+            if not os.path.exists(filename):
+                raise FileNotFoundError(f"Файл данных не найден: {filename}")
+            with open(filename, 'r', encoding='utf-8') as file:
+                for row_number, row in enumerate(csv.DictReader(file), 2):
+                    if not row.get('stylometry'):
+                        continue
+                    features = self.extract_features(row['stylometry'])
+                    if features is not None:
+                        records.append({
+                            'features': features,
+                            'label': label,
+                            'source_file': str(filename),
+                            'row_number': row_number,
+                            'text': row.get('text', ''),
+                            'stylometry': row['stylometry']
+                        })
+        if not records:
             raise ValueError("Не удалось загрузить данные")
-        return np.array(X), np.array(y)
-    def train(self, old_news_file, recent_news_file, test_size=0.2):
+        return records
+
+    def train(self, old_news_file, recent_news_file, test_size=0.2,
+              split_file=Path('data/classifier_split.json')):
         logger.info("Начало обучения модели")
-        try:
-            X, y = self.load_data(old_news_file, recent_news_file)
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_size, random_state=42)
-            self.model.fit(X_train, y_train)
-            accuracy = accuracy_score(y_test, self.model.predict(X_test))
-            logger.info(f"Обучение завершено. Точность: {accuracy:.2%}")
-            self.is_trained = True
-            return accuracy
-        except Exception as e:
-            logger.error(f"Ошибка обучения: {str(e)}")
-            raise
+        records = self.load_data(old_news_file, recent_news_file)
+        indices = np.arange(len(records))
+        train_indices, test_indices = train_test_split(
+            indices,
+            test_size=test_size,
+            random_state=42,
+            stratify=[record['label'] for record in records]
+        )
+        x_train = np.array([records[index]['features'] for index in train_indices])
+        y_train = np.array([records[index]['label'] for index in train_indices])
+        x_test = np.array([records[index]['features'] for index in test_indices])
+        y_test = np.array([records[index]['label'] for index in test_indices])
+
+        self.model.fit(x_train, y_train)
+        accuracy = accuracy_score(y_test, self.model.predict(x_test))
+        self.is_trained = True
+        self.test_records = [records[index] for index in test_indices]
+        self._save_split(records, train_indices, test_indices, split_file)
+        logger.info(f"Обучение завершено. Точность: {accuracy:.2%}")
+        return accuracy
+
+    def _save_split(self, records, train_indices, test_indices, split_file):
+        split_file = Path(split_file)
+        split_file.parent.mkdir(parents=True, exist_ok=True)
+        result = {
+            'random_state': 42,
+            'test_size': 0.2,
+            'train': [self._split_record(records[index]) for index in train_indices],
+            'test': [self._split_record(records[index]) for index in test_indices]
+        }
+        temporary_file = split_file.with_suffix('.tmp')
+        temporary_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(temporary_file, split_file)
+
+    @staticmethod
+    def _split_record(record):
+        return {
+            'source_file': record['source_file'],
+            'row_number': record['row_number'],
+            'label': record['label'],
+            'text': record['text']
+        }
+
     def predict(self, stylometry_data):
         if not self.is_trained:
             raise RuntimeError("Модель не обучена")
@@ -118,6 +129,7 @@ class NewsClassifier:
         if features is None:
             raise ValueError("Неверный формат данных")
         return self.model.predict([features])[0]
+
     def predict_proba(self, stylometry_data):
         if not self.is_trained:
             raise RuntimeError("Модель не обучена")

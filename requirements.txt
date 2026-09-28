@@ -3,7 +3,6 @@ nltk==3.9.1
 numpy==2.2.6
 pymorphy3==2.0.3
 pymorphy3-dicts-ru==2.4.417150.4580142
-razdel==0.5.0
 scikit-learn==1.7.0
 selenium==4.33.0
 webdriver-manager==4.0.2

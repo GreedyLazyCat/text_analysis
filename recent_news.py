@@ -7,24 +7,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import csv
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
-from collections import Counter
-import pymorphy3
-from nltk.stem.snowball import SnowballStemmer
-from razdel import tokenize as razdel_tokenize
 
 class RecentNewsParser:
     def __init__(self):
-        self.morph = pymorphy3.MorphAnalyzer()
-        self.stemmer = SnowballStemmer("russian")
         self.driver = None
-        self.STOP_WORDS = {
-            'который', 'которые', 'которой', 'котором', 'которых',
-            'этот', 'этого', 'этому', 'этим', 'этом',
-            'весь', 'всего', 'всему', 'всем', 'всём',
-            'свой', 'своего', 'своему', 'своим', 'своём'
-        }
     def setup_driver(self):
         options = webdriver.ChromeOptions()
         options.add_argument("--headless")
@@ -87,34 +75,31 @@ class RecentNewsParser:
         self.driver.quit()
         return articles
     def parse_ria_article(self, url):
-        self.setup_driver()
-        self.driver.get(url)
-        time.sleep(3)
         try:
+            self.setup_driver()
+            self.driver.get(url)
+            time.sleep(3)
             WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.article__text"))
             )
-        except:
-            pass
-        soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-        title = soup.find('h1', class_='article__title')
-        date = soup.find('div', class_='article__info-date')
-        blocks = soup.find_all('div', class_='article__text')
-        raw_text = "\n".join(b.get_text(strip=True) for b in blocks if b)
-        processed_text = self.process_text(raw_text)
-        self.driver.quit()
-        return {
-            'title': title.get_text(strip=True) if title else '',
-            'date': self.parse_article_date(date.get_text(strip=True) if date else ''),
-            'url': url,
-            'text': processed_text
-        }
-    def process_text(self, text):
-        tokens = [_.text.lower() for _ in razdel_tokenize(text)]
-        tokens = [t for t in tokens if t.isalpha() and t not in self.STOP_WORDS]
-        lemmas = [self.morph.parse(t)[0].normal_form for t in tokens]
-        stems = [self.stemmer.stem(lemma) for lemma in lemmas]
-        return " ".join(stems)
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            title = soup.find('h1', class_='article__title')
+            date = soup.find('div', class_='article__info-date')
+            blocks = soup.find_all('div', class_='article__text')
+            raw_text = "\n".join(b.get_text(strip=True) for b in blocks if b)
+            return {
+                'title': title.get_text(strip=True) if title else '',
+                'date': self.parse_article_date(date.get_text(strip=True) if date else ''),
+                'url': url,
+                'text': raw_text
+            }
+        except Exception as error:
+            print(f"[RIA] Ошибка загрузки статьи {url}: {error}")
+            return None
+        finally:
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
     def parse_article_date(self, date_str):
         match = re.search(r'(\d{2}\.\d{2}\.\d{4})', date_str)
         if match:
