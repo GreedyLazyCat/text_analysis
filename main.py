@@ -272,19 +272,28 @@ def main():
     else:
         gazeta_analyzed, ria_analyzed = load_existing_analyzed_dataset()
 
-    print("\nЗапуск классификатора")
+    print("\nЗапуск классификаторов")
     classifier = NewsClassifier()
-    accuracy = classifier.train(
+    accuracies = classifier.train(
         DATA_DIR / "gazeta_analyzed.csv",
         DATA_DIR / "ria_analyzed.csv"
     )
-    print(f"Точность классификатора: {accuracy:.2%}")
     example_article = classifier.test_records[0]
-    prediction = classifier.predict(example_article['stylometry'])
-    proba = classifier.predict_proba(example_article['stylometry'])
-    print(f"\nПример классификации:")
-    print(f"Предсказанный класс: {'Новая' if prediction == 1 else 'Старая'} новость")
-    print(f"Вероятности: [Старая: {proba[0]:.2%}, Новая: {proba[1]:.2%}]")
+    classifier_names = {
+        'naive_bayes': 'Gaussian Naive Bayes',
+        'decision_tree': 'Decision Tree',
+        'svm': 'SVM'
+    }
+    print("\nРезультаты классификации:")
+    for classifier_key, classifier_name in classifier_names.items():
+        print(f"{classifier_name}: точность {accuracies[classifier_key]:.2%}")
+
+    print("\nПримеры классификации:")
+    for classifier_key, classifier_name in classifier_names.items():
+        prediction = classifier.predict(example_article['stylometry'], classifier_key)
+        proba = classifier.predict_proba(example_article['stylometry'], classifier_key)
+        print(f"{classifier_name}: {'Новая' if prediction == 1 else 'Старая'} новость")
+        print(f"  Вероятности: [Старая: {proba[0]:.2%}, Новая: {proba[1]:.2%}]")
     print("\nПолный цикл завершён")
 if __name__ == "__main__":
     main()

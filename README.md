@@ -15,9 +15,9 @@
 5. Исходный корпус сохраняется в `data/ria.csv` и `data/gazeta.csv`.
 6. `StylometricAnalyzer` читает исходный корпус и вычисляет стилометрические характеристики.
 7. Результаты анализа сохраняются в `data/ria_analyzed.csv` и `data/gazeta_analyzed.csv`.
-8. `NewsClassifier` превращает стилометрию в числовые векторы и обучает Gaussian Naive Bayes.
-9. Данные делятся на train/test, вычисляется `accuracy`, состав выборок сохраняется в `data/classifier_split.json`.
-10. Демонстрационное предсказание выполняется для записи из test-выборки.
+8. `NewsClassifier` превращает стилометрию в числовые векторы и обучает Gaussian Naive Bayes, Decision Tree и SVM.
+9. Данные один раз делятся на train/test, после чего для всех трёх моделей вычисляется `accuracy`; состав выборок сохраняется в `data/classifier_split.json`.
+10. Демонстрационные предсказания всех трёх моделей выполняются для записи из test-выборки.
 
 ## Какие тексты используются
 
@@ -149,7 +149,7 @@
 В `main.py` вызывается:
 
 ```python
-accuracy = classifier.train("data/gazeta_analyzed.csv", "data/ria_analyzed.csv")
+accuracies = classifier.train("data/gazeta_analyzed.csv", "data/ria_analyzed.csv")
 ```
 
 Внутри `train`:
@@ -158,8 +158,8 @@ accuracy = classifier.train("data/gazeta_analyzed.csv", "data/ria_analyzed.csv")
 2. Из `data/ria_analyzed.csv` извлекаются данные, всем строкам назначается метка `1`.
 3. Данные объединяются в матрицу `X`, метки — в массив `y`.
 4. `train_test_split` делит данные на обучающую и тестовую части. Размер тестовой части — `20%` (`test_size=0.2`), используется `random_state=42` и стратификация по классу (`stratify`), чтобы доля классов сохранялась в обеих выборках.
-5. На обучающей части обучается `GaussianNB` из scikit-learn — гауссовский наивный байесовский классификатор.
-6. На тестовой части считается `accuracy`, то есть доля правильных предсказаний.
+5. На одной и той же обучающей части обучаются `GaussianNB`, `DecisionTreeClassifier` и `SVC` из scikit-learn. Для SVM признаки дополнительно стандартизируются.
+6. На одной и той же тестовой части для каждой модели считается `accuracy`, то есть доля правильных предсказаний. Все три результата печатаются в консоль.
 7. Состав обеих выборок сохраняется в `data/classifier_split.json`: для каждой новости записываются исходный файл, номер строки, класс и текст. В файл попадают параметры разбиения `random_state` и `test_size`.
 
 Таким образом, классы в текущем коде означают:
@@ -174,11 +174,11 @@ accuracy = classifier.train("data/gazeta_analyzed.csv", "data/ria_analyzed.csv")
 Для нового текста сначала нужно получить стилометрический JSON того же формата, затем вызвать:
 
 ```python
-prediction = classifier.predict(stylometry_data)
-probabilities = classifier.predict_proba(stylometry_data)
+prediction = classifier.predict(stylometry_data, classifier='svm')
+probabilities = classifier.predict_proba(stylometry_data, classifier='svm')
 ```
 
-`predict` возвращает `0` или `1`, а `predict_proba` — вероятности обоих классов.
+`predict` возвращает `0` или `1`, а `predict_proba` — вероятности обоих классов. Доступные имена моделей: `naive_bayes`, `decision_tree` и `svm`. По умолчанию используется `naive_bayes`.
 
 ## Формат файлов
 

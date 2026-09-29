@@ -7,6 +7,10 @@ from pathlib import Path
 import numpy as np
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
 
 from stylometry import POS_BIGRAMS, RUSSIAN_ALPHABET
@@ -21,7 +25,13 @@ logger = logging.getLogger(__name__)
 
 class NewsClassifier:
     def __init__(self):
-        self.model = GaussianNB()
+        self.models = {
+            'naive_bayes': GaussianNB(),
+            'decision_tree': DecisionTreeClassifier(random_state=42),
+            'svm': make_pipeline(StandardScaler(), SVC(probability=True, random_state=42))
+        }
+        # Keep the original default model available for callers using predict().
+        self.model = self.models['naive_bayes']
         self.is_trained = False
 
     def extract_features(self, stylometry_data):
@@ -92,13 +102,17 @@ class NewsClassifier:
         x_test = np.array([records[index]['features'] for index in test_indices])
         y_test = np.array([records[index]['label'] for index in test_indices])
 
-        self.model.fit(x_train, y_train)
-        accuracy = accuracy_score(y_test, self.model.predict(x_test))
+        accuracies = {}
+        for name, model in self.models.items():
+            model.fit(x_train, y_train)
+            accuracies[name] = accuracy_score(y_test, model.predict(x_test))
+
         self.is_trained = True
         self.test_records = [records[index] for index in test_indices]
         self._save_split(records, train_indices, test_indices, split_file)
-        logger.info(f"Обучение завершено. Точность: {accuracy:.2%}")
-        return accuracy
+        for name, accuracy in accuracies.items():
+            logger.info(f"Обучение {name} завершено. Точность: {accuracy:.2%}")
+        return accuracies
 
     def _save_split(self, records, train_indices, test_indices, split_file):
         split_file = Path(split_file)
@@ -122,18 +136,22 @@ class NewsClassifier:
             'text': record['text']
         }
 
-    def predict(self, stylometry_data):
+    def predict(self, stylometry_data, classifier='naive_bayes'):
         if not self.is_trained:
             raise RuntimeError("Модель не обучена")
+        if classifier not in self.models:
+            raise ValueError(f"Неизвестный классификатор: {classifier}")
         features = self.extract_features(stylometry_data)
         if features is None:
             raise ValueError("Неверный формат данных")
-        return self.model.predict([features])[0]
+        return self.models[classifier].predict([features])[0]
 
-    def predict_proba(self, stylometry_data):
+    def predict_proba(self, stylometry_data, classifier='naive_bayes'):
         if not self.is_trained:
             raise RuntimeError("Модель не обучена")
+        if classifier not in self.models:
+            raise ValueError(f"Неизвестный классификатор: {classifier}")
         features = self.extract_features(stylometry_data)
         if features is None:
             raise ValueError("Неверный формат данных")
-        return self.model.predict_proba([features])[0]
+        return self.models[classifier].predict_proba([features])[0]
