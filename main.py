@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from sklearn.metrics import confusion_matrix
 from stylometry import StylometricAnalyzer
 from datetime import datetime
 from classifier import NewsClassifier
@@ -287,6 +288,21 @@ def main():
     print("\nРезультаты классификации:")
     for classifier_key, classifier_name in classifier_names.items():
         print(f"{classifier_name}: точность {accuracies[classifier_key]:.2%}")
+
+    print("\nМатрицы ошибок:")
+    class_names = {0: 'Старая', 1: 'Новая'}
+    true_labels = [record['label'] for record in classifier.test_records]
+    for classifier_key, classifier_name in classifier_names.items():
+        predicted_labels = [
+            classifier.predict(record['stylometry'], classifier_key)
+            for record in classifier.test_records
+        ]
+        matrix = confusion_matrix(true_labels, predicted_labels, labels=list(class_names))
+        print(f"\n{classifier_name}")
+        print("Факт \\ Прогноз | " + " | ".join(class_names[label] for label in class_names))
+        print("-" * 39)
+        for label, row in zip(class_names, matrix):
+            print(f"{class_names[label]:14} | " + " | ".join(f"{value:5}" for value in row))
 
     print("\nПримеры классификации:")
     for classifier_key, classifier_name in classifier_names.items():
